@@ -13,10 +13,10 @@ import networkx as nx
 
 app = FastAPI()
 
-# Enable CORS
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your frontend domain
+    allow_origins=["https://ai-book-summarizer.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
