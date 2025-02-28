@@ -1,0 +1,8 @@
+fastapi==0.109.2
+uvicorn==0.27.1
+python-multipart==0.0.9
+transformers==4.49.0
+torch==2.6.0
+spacy==3.8.4
+networkx==3.4.2
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
