@@ -16,15 +16,6 @@ Backend API for the AI Book Summarizer project that processes books and generate
 ## Deployment
 This backend is designed to be deployed on Heroku, Render, or similar platforms.
 
-### Deploy to Heroku
-1. Fork this repository
-2. Sign up on [Heroku](https://www.heroku.com/)
-3. Create a new app
-4. Connect to your GitHub repository
-5. Deploy settings:
-   - Build command: `pip install -r requirements.txt`
-   - Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-
 ### Deploy to Render
 1. Fork this repository
 2. Sign up on [Render](https://render.com/)
