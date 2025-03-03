@@ -147,11 +147,26 @@ async def upload_file(file: UploadFile = File(...)):
         
         # Get summary from Hugging Face API
         logger.info("Requesting summary from Hugging Face API")
-        summary = get_summary(text)
+        try:
+            summary = get_summary(text)
+            if not summary:
+                raise ValueError("Failed to get summary from API")
+        except Exception as e:
+            logger.error(f"Error getting summary: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate summary. Please try again."
+            )
         
         # Extract entities using spaCy (lightweight)
         logger.info("Extracting entities using spaCy")
-        entities = extract_entities(text)
+        try:
+            entities = extract_entities(text)
+            if not entities:
+                entities = []  # Ensure we always return a list
+        except Exception as e:
+            logger.error(f"Error extracting entities: {str(e)}")
+            entities = []  # Return empty list on error
         
         logger.info("Successfully processed file")
         return {
@@ -169,7 +184,7 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f"Error processing file {file.filename}: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing file: {str(e)}"
+            detail=f"An error occurred while processing the file: {str(e)}"
         )
 
 # Health check endpoint
