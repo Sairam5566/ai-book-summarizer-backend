@@ -17,10 +17,10 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://ai-book-summarizer.netlify.app", "http://localhost:3000"],
+    allow_origins=["*"],  # Allow all origins temporarily for testing
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Load lightweight spaCy model for entity extraction
