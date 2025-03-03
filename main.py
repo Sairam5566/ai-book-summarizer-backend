@@ -1,14 +1,11 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-from pathlib import Path
-import uuid
-import json
-import asyncio
-from typing import Dict
-import os
-from transformers import pipeline
 import spacy
+import requests
+from typing import List
+import json
+import os
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -21,101 +18,66 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load models only when needed
-summarizer = None
-nlp = None
+# Load lightweight spaCy model for entity extraction
+nlp = spacy.load("en_core_web_sm")
 
-def get_summarizer():
-    global summarizer
-    if summarizer is None:
-        summarizer = pipeline("summarization", model="facebook/bart-large-cnn", device=-1)
-    return summarizer
+# Hugging Face API configuration
+HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 
-def get_nlp():
-    global nlp
-    if nlp is None:
-        nlp = spacy.load("en_core_web_sm")
-    return nlp
+headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
 
-# Store processing status
-processing_tasks: Dict[str, dict] = {}
-UPLOAD_DIR = Path("uploads")
-RESULTS_DIR = Path("results")
+def get_summary(text: str) -> str:
+    """Get summary using Hugging Face's hosted BART model"""
+    payload = {"inputs": text, "parameters": {"max_length": 300, "min_length": 100}}
+    response = requests.post(HUGGINGFACE_API_URL, headers=headers, json=payload)
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Error getting summary from Hugging Face API")
+    
+    return response.json()[0]["summary_text"]
 
-# Create directories if they don't exist
-UPLOAD_DIR.mkdir(exist_ok=True)
-RESULTS_DIR.mkdir(exist_ok=True)
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    try:
-        # Create uploads directory if it doesn't exist
-        if not os.path.exists("uploads"):
-            os.makedirs("uploads")
-
-        # Save uploaded file
-        file_path = f"uploads/{file.filename}"
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-
-        # Read the text content
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        # Get or initialize models
-        summarizer = get_summarizer()
-        nlp = get_nlp()
-
-        # Generate summary in chunks to save memory
-        max_chunk_length = 1024
-        chunks = [text[i:i + max_chunk_length] for i in range(0, len(text), max_chunk_length)]
-        summaries = []
-        
-        for chunk in chunks:
-            if len(chunk.strip()) > 100:  # Only summarize chunks with substantial content
-                summary = summarizer(chunk, max_length=130, min_length=30, do_sample=False)
-                summaries.append(summary[0]['summary_text'])
-        
-        final_summary = " ".join(summaries)
-
-        # Process with spaCy for visualization
-        doc = nlp(final_summary)
-        
-        # Extract entities and relationships
-        entities = []
-        for ent in doc.ents:
+def extract_entities(text: str) -> List[dict]:
+    """Extract named entities using spaCy"""
+    doc = nlp(text)
+    entities = []
+    
+    for ent in doc.ents:
+        if ent.label_ in ["PERSON", "ORG", "GPE", "WORK_OF_ART", "EVENT"]:
             entities.append({
                 "text": ent.text,
                 "type": ent.label_
             })
+    
+    return list({(e["text"], e["type"]): e for e in entities}.values())  # Remove duplicates
 
-        # Clean up the uploaded file
-        os.remove(file_path)
-
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    if not file.filename.endswith('.txt'):
+        raise HTTPException(status_code=400, detail="Only .txt files are allowed")
+    
+    try:
+        content = await file.read()
+        text = content.decode('utf-8')
+        
+        # Get summary from Hugging Face API
+        summary = get_summary(text)
+        
+        # Extract entities using spaCy (lightweight)
+        entities = extract_entities(text)
+        
         return {
-            "summary": final_summary,
+            "summary": summary,
             "entities": entities
         }
-
+        
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/status/{task_id}")
-async def get_status(task_id: str):
-    """Get the processing status and results for a task."""
-    if task_id not in processing_tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    task = processing_tasks[task_id]
-    response = {"status": task["status"]}
-
-    if task["status"] == "completed":
-        response["result"] = task["result"]
-    elif task["status"] == "failed":
-        response["error"] = task.get("error", "Unknown error")
-
-    return response
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
