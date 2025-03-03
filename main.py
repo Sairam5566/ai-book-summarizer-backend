@@ -44,25 +44,38 @@ headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
 def get_summary(text: str) -> str:
     """Get summary using Hugging Face's hosted BART model"""
     try:
-        payload = {"inputs": text, "parameters": {"max_length": 300, "min_length": 100}}
-        response = requests.post(HUGGINGFACE_API_URL, headers=headers, json=payload)
-        
-        if response.status_code != 200:
-            logger.error(f"Hugging Face API error: {response.text}")
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Error from Hugging Face API: {response.text}"
-            )
-        
-        result = response.json()
-        if isinstance(result, list) and len(result) > 0:
-            return result[0]["summary_text"]
-        else:
-            logger.error(f"Unexpected response format from Hugging Face: {result}")
-            raise HTTPException(
-                status_code=500,
-                detail="Unexpected response format from summarization API"
-            )
+        # Split text into chunks of 1000 characters
+        max_chunk_size = 1000
+        chunks = [text[i:i+max_chunk_size] for i in range(0, len(text), max_chunk_size)]
+        summaries = []
+
+        for chunk in chunks:
+            if len(chunk.strip()) < 50:  # Skip very small chunks
+                continue
+
+            payload = {"inputs": chunk, "parameters": {"max_length": 150, "min_length": 50}}
+            response = requests.post(HUGGINGFACE_API_URL, headers=headers, json=payload)
+            
+            if response.status_code != 200:
+                logger.error(f"Hugging Face API error: {response.text}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error from Hugging Face API: {response.text}"
+                )
+            
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                summaries.append(result[0]["summary_text"])
+            else:
+                logger.error(f"Unexpected response format from Hugging Face: {result}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Unexpected response format from summarization API"
+                )
+
+        # Combine summaries
+        final_summary = " ".join(summaries)
+        return final_summary
             
     except requests.exceptions.RequestException as e:
         logger.error(f"Request error to Hugging Face API: {str(e)}")
@@ -74,17 +87,30 @@ def get_summary(text: str) -> str:
 def extract_entities(text: str) -> List[dict]:
     """Extract named entities using spaCy"""
     try:
-        doc = nlp(text)
-        entities = []
+        # Process text in chunks to avoid memory issues
+        max_chunk_size = 100000  # 100KB chunks
+        chunks = [text[i:i+max_chunk_size] for i in range(0, len(text), max_chunk_size)]
+        all_entities = []
         
-        for ent in doc.ents:
-            if ent.label_ in ["PERSON", "ORG", "GPE", "WORK_OF_ART", "EVENT"]:
-                entities.append({
-                    "text": ent.text,
-                    "type": ent.label_
-                })
+        for chunk in chunks:
+            doc = nlp(chunk)
+            for ent in doc.ents:
+                if ent.label_ in ["PERSON", "ORG", "GPE", "WORK_OF_ART", "EVENT"]:
+                    all_entities.append({
+                        "text": ent.text,
+                        "type": ent.label_
+                    })
         
-        return list({(e["text"], e["type"]): e for e in entities}.values())  # Remove duplicates
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_entities = []
+        for entity in all_entities:
+            key = (entity["text"], entity["type"])
+            if key not in seen:
+                seen.add(key)
+                unique_entities.append(entity)
+        
+        return unique_entities
     
     except Exception as e:
         logger.error(f"Error in entity extraction: {str(e)}")
@@ -100,7 +126,22 @@ async def upload_file(file: UploadFile = File(...)):
     
     try:
         content = await file.read()
-        text = content.decode('utf-8')
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            # Try with different encodings
+            encodings = ['utf-8', 'latin1', 'cp1252']
+            for encoding in encodings:
+                try:
+                    text = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not decode file. Please ensure it's a valid text file."
+                )
         
         logger.info(f"Processing file: {file.filename}")
         
@@ -122,7 +163,7 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f"Error decoding file: {file.filename}")
         raise HTTPException(
             status_code=400,
-            detail="File must be a valid UTF-8 encoded text file"
+            detail="File must be a valid text file"
         )
     except Exception as e:
         logger.error(f"Error processing file {file.filename}: {str(e)}")
@@ -142,10 +183,19 @@ def health_check():
         if not HUGGINGFACE_API_TOKEN:
             raise ValueError("HUGGINGFACE_API_TOKEN not configured")
             
+        # Test Hugging Face API connection
+        test_response = requests.post(
+            HUGGINGFACE_API_URL,
+            headers=headers,
+            json={"inputs": "Test sentence.", "parameters": {"max_length": 50, "min_length": 10}}
+        )
+        if test_response.status_code != 200:
+            raise ValueError(f"Hugging Face API test failed: {test_response.text}")
+            
         return {
             "status": "healthy",
             "spacy_model": "loaded",
-            "huggingface_token": "configured"
+            "huggingface_api": "connected"
         }
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
