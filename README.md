@@ -26,7 +26,7 @@ This backend is designed to be deployed on Heroku, Render, or similar platforms.
    - Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
 ## Local Development
-1. Clone the repository
+1. Clone the repository.
 2. Create a virtual environment:
    ```bash
    python -m venv venv
